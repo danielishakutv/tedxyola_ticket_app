@@ -136,6 +136,16 @@ const statsStatement = db.prepare(`
   FROM guests
 `)
 
+// Breakdown of how many tickets of each tier were bought (plus merch-only guests).
+const ticketTypeStatement = db.prepare(`
+  SELECT
+    COALESCE(NULLIF(ticket_type, ''), 'None') AS tier,
+    COUNT(*) AS guests,
+    SUM(quantity) AS tickets
+  FROM guests
+  GROUP BY tier
+`)
+
 // Counter-based entry: tracks how many of an order's seats have been admitted,
 // plus an optional admission log (name + time) so companions can arrive later.
 const setEntryStatement = db.prepare(`
@@ -160,6 +170,17 @@ const merchUndoStatement = db.prepare(`
   UPDATE guests
   SET merch_checked_in = 0,
       merch_checked_in_at = NULL,
+      updated_at = CURRENT_TIMESTAMP
+  WHERE id = ?
+`)
+
+// Sell a ticket at the gate: set the tier if the guest had none, add a seat,
+// and add the price to their total. Used for merch-only / walk-up buyers.
+const sellTicketStatement = db.prepare(`
+  UPDATE guests
+  SET ticket_type = COALESCE(NULLIF(ticket_type, ''), ?),
+      quantity = quantity + 1,
+      total = COALESCE(total, 0) + ?,
       updated_at = CURRENT_TIMESTAMP
   WHERE id = ?
 `)
@@ -232,7 +253,7 @@ const server = createServer(async (request, response) => {
     const isAdmin = session.role === 'admin'
 
     if (request.method === 'GET' && url.pathname === '/api/stats') {
-      return send(response, 200, normalizeStats(statsStatement.get()))
+      return send(response, 200, buildStats())
     }
 
     if (request.method === 'GET' && url.pathname === '/api/admin/guests') {
@@ -255,7 +276,7 @@ const server = createServer(async (request, response) => {
         pageCount,
         pageSize: ROSTER_PAGE_SIZE,
         filter: filterKey,
-        stats: normalizeStats(statsStatement.get()),
+        stats: buildStats(),
       })
     }
 
@@ -272,7 +293,7 @@ const server = createServer(async (request, response) => {
       if (texts.length === 0) return send(response, 400, { message: 'No CSV content received' })
       try {
         const summary = importSales(db, texts)
-        return send(response, 200, { summary, stats: normalizeStats(statsStatement.get()) })
+        return send(response, 200, { summary, stats: buildStats() })
       } catch (error) {
         console.error('Import failed:', error)
         return send(response, 500, { message: 'Import failed — no changes were applied' })
@@ -282,7 +303,7 @@ const server = createServer(async (request, response) => {
     if (request.method === 'GET' && url.pathname === '/api/guests/search') {
       const query = normalizeSearch(url.searchParams.get('q') || '')
       if (query.length === 0) {
-        return send(response, 200, { guests: [], stats: normalizeStats(statsStatement.get()) })
+        return send(response, 200, { guests: [], stats: buildStats() })
       }
 
       const guests = searchStatement.all(
@@ -295,7 +316,7 @@ const server = createServer(async (request, response) => {
         `% ${query}%`,
       ).map(formatGuest)
 
-      return send(response, 200, { guests, stats: normalizeStats(statsStatement.get()) })
+      return send(response, 200, { guests, stats: buildStats() })
     }
 
     if (request.method === 'POST' && url.pathname === '/api/guests') {
@@ -343,7 +364,7 @@ const server = createServer(async (request, response) => {
 
       return send(response, 201, {
         guest: formatGuest(guestStatement.get(Number(result.lastInsertRowid))),
-        stats: normalizeStats(statsStatement.get()),
+        stats: buildStats(),
       })
     }
 
@@ -387,7 +408,27 @@ const server = createServer(async (request, response) => {
 
       return send(response, 200, {
         guest: formatGuest(guestStatement.get(id)),
-        stats: normalizeStats(statsStatement.get()),
+        stats: buildStats(),
+      })
+    }
+
+    const sellMatch = url.pathname.match(/^\/api\/guests\/(\d+)\/sell-ticket$/)
+    if (request.method === 'POST' && sellMatch) {
+      const id = Number(sellMatch[1])
+      const guest = guestStatement.get(id)
+      if (!guest) return send(response, 404, { message: 'Guest not found' })
+
+      const body = await readJson(request)
+      const ticketType = String(body.ticket_type || '').trim()
+      if (!TICKET_TYPES[ticketType]) {
+        return send(response, 400, { message: 'Pick a valid ticket type' })
+      }
+
+      sellTicketStatement.run(ticketType, TICKET_TYPES[ticketType], id)
+
+      return send(response, 200, {
+        guest: formatGuest(guestStatement.get(id)),
+        stats: buildStats(),
       })
     }
 
@@ -624,6 +665,18 @@ function normalizeStats(stats) {
     seats: Number(stats.seats || 0),
     merchEligible: Number(stats.merchEligible || 0),
     merchDone: Number(stats.merchDone || 0),
+  }
+}
+
+// Full stats payload: totals + per-tier ticket breakdown.
+function buildStats() {
+  return {
+    ...normalizeStats(statsStatement.get()),
+    ticketTypes: ticketTypeStatement.all().map((row) => ({
+      tier: row.tier,
+      guests: Number(row.guests || 0),
+      tickets: Number(row.tickets || 0),
+    })),
   }
 }
 

@@ -869,6 +869,7 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
   }
   .stats-title { flex-basis: 100%; }
   .stat-block { flex: 1; min-width: 150px; }
+  .stats-breakdown { flex-basis: 100%; }
 }
 
 @media (max-width: 560px) {
@@ -947,6 +948,96 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
   letter-spacing: 0.03em;
   white-space: nowrap;
 }
+.ticket-pill.none {
+  background: var(--bg-2);
+  color: var(--muted);
+  border: 1px solid var(--line-med);
+}
+
+/* ─── No-ticket (merch-only) entry + sell-at-gate ────────────────────────── */
+.no-ticket-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.sell-ticket {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 14px;
+  background: var(--bg-1);
+}
+.sell-ticket-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.sell-ticket-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.tier-chip {
+  flex: 1;
+  min-width: 90px;
+  padding: 9px 10px;
+  border-radius: 10px;
+  border: 1.5px solid var(--line-med);
+  background: var(--bg-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.tier-chip.active {
+  border-color: var(--tedx-red);
+  background: var(--danger-bg);
+  color: var(--tedx-red);
+}
+.action-button.sell {
+  background: var(--tedx-red);
+  border-color: var(--tedx-red);
+  color: #fff;
+}
+.action-button.sell:not(:disabled):hover { filter: brightness(1.05); }
+
+/* ─── Stats: ticket-type breakdown ───────────────────────────────────────── */
+.stats-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.stats-subtitle {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+}
+.breakdown-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 13.5px;
+}
+.breakdown-tier { font-weight: 700; color: var(--ink); }
+.breakdown-row.muted .breakdown-tier { font-weight: 600; color: var(--muted); }
+.breakdown-count {
+  font-weight: 800;
+  color: var(--heading);
+  font-variant-numeric: tabular-nums;
+}
+.tier-spark { color: #e0a106; }
+.tier-ember { color: #e06f1c; }
+.tier-blaze { color: var(--tedx-red); }
 
 .qty-badge {
   display: inline-flex;

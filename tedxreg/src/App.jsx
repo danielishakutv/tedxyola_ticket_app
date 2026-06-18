@@ -173,7 +173,8 @@ function App() {
   const [query, setQuery] = useState('')
   const [guests, setGuests] = useState([])
   const [selectedGuest, setSelectedGuest] = useState(null)
-  const [stats, setStats] = useState({ total: 0, checkedIn: 0, seats: 0, merchEligible: 0, merchDone: 0 })
+  const [stats, setStats] = useState({ total: 0, checkedIn: 0, seats: 0, merchEligible: 0, merchDone: 0, ticketTypes: [] })
+  const [selling, setSelling] = useState(false)
   const [loading, setLoading] = useState(false)
   const [actionStatus, setActionStatus] = useState('')
   const [loginLoading, setLoginLoading] = useState(false)
@@ -464,6 +465,30 @@ function App() {
     }
   }
 
+  async function sellTicket(ticketType) {
+    if (!selectedGuest) return
+    setSelling(true)
+    setActionStatus('Selling ticket…')
+    try {
+      const data = await apiFetch(`/api/guests/${selectedGuest.id}/sell-ticket`, {
+        method: 'POST',
+        token,
+        body: JSON.stringify({ ticket_type: ticketType }),
+      })
+      setSelectedGuest(data.guest)
+      setStats(data.stats)
+      const patchList = (list) => list.map((g) => (g.id === data.guest.id ? data.guest : g))
+      setGuests(patchList)
+      setRoster((current) => ({ ...current, guests: patchList(current.guests) }))
+      setActionStatus(`✓ ${ticketType} ticket sold (${formatNaira(TICKET_PRICES[ticketType])}) — collect payment, then admit entry`)
+    } catch (error) {
+      setActionStatus(error.message || 'Could not sell ticket')
+      handleAuthError(error)
+    } finally {
+      setSelling(false)
+    }
+  }
+
   function clearHome() {
     setQuery('')
     setGuests([])
@@ -748,6 +773,7 @@ function App() {
             iconClass="merch"
             icon={<IconGift />}
           />
+          <TicketBreakdown ticketTypes={stats.ticketTypes} />
         </aside>
       </section>
 
@@ -774,8 +800,10 @@ function App() {
               <span className="modal-eyebrow">Guest Details</span>
               <h2 id="modal-guest-name">{selectedGuest.name}</h2>
               <div className="modal-status">
-                {selectedGuest.ticket_type && (
+                {selectedGuest.ticket_type ? (
                   <span className="ticket-pill">{selectedGuest.ticket_type}</span>
+                ) : (
+                  <span className="ticket-pill none">No ticket</span>
                 )}
                 <EntryPill guest={selectedGuest} />
                 {selectedGuest.merch ? (
@@ -859,7 +887,7 @@ function App() {
                 />
                 <MerchButton guest={selectedGuest} onCheckIn={() => updateGuest('check-in-merch')} />
               </div>
-            ) : (
+            ) : selectedGuest.ticket_type ? (
               <div className="action-grid">
                 <button
                   className={`action-button check-in${selectedGuest.checked_in ? ' done' : ''}`}
@@ -870,6 +898,11 @@ function App() {
                   <span className="action-button-icon">✓</span>
                   {selectedGuest.checked_in ? 'Checked In' : 'Check-In Entry'}
                 </button>
+                <MerchButton guest={selectedGuest} onCheckIn={() => updateGuest('check-in-merch')} />
+              </div>
+            ) : (
+              <div className="action-stack">
+                <NoTicketEntry selling={selling} onSell={sellTicket} />
                 <MerchButton guest={selectedGuest} onCheckIn={() => updateGuest('check-in-merch')} />
               </div>
             )}
@@ -1127,6 +1160,59 @@ function MerchButton({ guest, onCheckIn }) {
       <span className="action-button-icon">🎁</span>
       {!guest.merch ? 'No Merch' : guest.merch_checked_in ? 'Merch Done' : 'Check-In Merch'}
     </button>
+  )
+}
+
+// Shown for merch-only guests (no ticket): entry is disabled, but staff can
+// sell a ticket at the gate (pay on the spot), which then enables check-in.
+function NoTicketEntry({ selling, onSell }) {
+  const [tier, setTier] = useState('Spark')
+  return (
+    <div className="no-ticket-entry">
+      <button className="action-button check-in" type="button" disabled>
+        <span className="action-button-icon">✓</span> No ticket — entry disabled
+      </button>
+      <div className="sell-ticket">
+        <span className="sell-ticket-label">Selling a ticket at the gate? Pick a tier, collect payment, then sell:</span>
+        <div className="sell-ticket-options">
+          {TICKET_OPTIONS.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              className={`tier-chip${tier === option.value ? ' active' : ''}`}
+              onClick={() => setTier(option.value)}
+            >
+              {option.value} · {formatNaira(option.price)}
+            </button>
+          ))}
+        </div>
+        <button className="action-button sell" type="button" disabled={selling} onClick={() => onSell(tier)}>
+          {selling ? 'Selling…' : `Sell ${tier} ticket · ${formatNaira(TICKET_PRICES[tier])}`}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function TicketBreakdown({ ticketTypes = [] }) {
+  const byTier = Object.fromEntries(ticketTypes.map((t) => [t.tier, t]))
+  const none = byTier.None
+  return (
+    <div className="stats-breakdown">
+      <span className="stats-subtitle">Tickets by type</span>
+      {['Spark', 'Ember', 'Blaze'].map((name) => (
+        <div className="breakdown-row" key={name}>
+          <span className={`breakdown-tier tier-${name.toLowerCase()}`}>{name}</span>
+          <span className="breakdown-count">{byTier[name]?.tickets || 0}</span>
+        </div>
+      ))}
+      {none?.guests > 0 && (
+        <div className="breakdown-row muted">
+          <span className="breakdown-tier">No ticket (merch only)</span>
+          <span className="breakdown-count">{none.guests}</span>
+        </div>
+      )}
+    </div>
   )
 }
 
