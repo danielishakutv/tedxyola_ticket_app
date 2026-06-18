@@ -1,0 +1,37 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+data/*.sqlite
+data/*.sqlite-*
+
+data/ngrok*
+data/productSales.csv
+
+# The database holds customer PII + live check-in data — keep it out of git so
+# deploys can never overwrite the live DB and PII never lands in the repo.
+# (data/*.sqlite above already covers it.)
+
+# Sales exports contain customer PII — never web-serve or commit them
+data/sales-reports/
+public/*.csv
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

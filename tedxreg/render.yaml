@@ -1,0 +1,33 @@
+# Render.com Blueprint for the TEDxYola check-in app.
+# One web service that serves both the API and the built client, with the
+# SQLite database on a persistent disk so deploys never wipe check-in data.
+#
+# NOTE: a persistent disk requires a paid instance (Starter, ~$7/mo). The free
+# plan has no persistent disk and sleeps when idle — not suitable for the event.
+#
+# After the first deploy: log in as admin → "Import Sales" → upload the full
+# Selar exports to load guests. See DEPLOY.md.
+
+services:
+  - type: web
+    name: tedxreg
+    runtime: node
+    plan: starter
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: 22.20.0
+      - key: DATA_DIR
+        value: /data
+      # Set these in the Render dashboard (Environment tab) — do NOT commit real
+      # passwords. Use strong values; these replace the local dev defaults.
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: USER_PASSWORD
+        sync: false
+    disk:
+      name: tedx-data
+      mountPath: /data
+      sizeGB: 1
