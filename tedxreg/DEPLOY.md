@@ -67,6 +67,57 @@ Rules:
 
 ---
 
+## Deploy on your own server (Ubuntu + Apache) — access.tedxyola.com
+
+Runs as a systemd service on `127.0.0.1:8787`; Apache reverse-proxies the
+subdomain to it. The database lives in `/var/lib/tedxreg` (outside the repo), so
+`git pull` never overwrites live check-in data. Everything here is **additive** —
+it does not touch your other sites.
+
+```bash
+# 0. DNS: point access.tedxyola.com (A record) at the server IP.
+
+# 1. Clone the repo (public, no auth needed)
+sudo mkdir -p /var/www/access.tedxyola.com
+sudo chown "$USER" /var/www/access.tedxyola.com
+git clone https://github.com/danielishakutv/tedxyola_ticket_app.git /var/www/access.tedxyola.com
+cd /var/www/access.tedxyola.com/tedxreg
+
+# 2. Build
+npm ci
+npm run build
+
+# 3. Persistent data dir for the SQLite DB (owned by the service user)
+sudo mkdir -p /var/lib/tedxreg
+sudo chown -R www-data:www-data /var/lib/tedxreg
+
+# 4. Secrets (env file, not in git)
+sudo cp deploy/tedxreg.env.example /etc/tedxreg.env
+sudo nano /etc/tedxreg.env          # set strong ADMIN_PASSWORD / USER_PASSWORD
+sudo chmod 600 /etc/tedxreg.env
+
+# 5. systemd service
+command -v node                     # confirm path matches ExecStart in the unit
+sudo cp deploy/tedxreg.service /etc/systemd/system/tedxreg.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now tedxreg
+curl -s localhost:8787/api/health   # -> {"ok":true}
+
+# 6. Apache vhost (proxy)
+sudo a2enmod proxy proxy_http headers ssl
+sudo cp deploy/access.tedxyola.com.conf /etc/apache2/sites-available/access.tedxyola.com.conf
+sudo nano /etc/apache2/sites-available/access.tedxyola.com.conf   # set SSL cert paths
+sudo a2ensite access.tedxyola.com
+sudo apache2ctl configtest          # must say "Syntax OK"
+sudo systemctl reload apache2       # graceful — other sites stay up
+```
+
+Then open **https://access.tedxyola.com**, log in as admin (the password from
+`/etc/tedxreg.env`), click **Import Sales**, and upload the Selar CSVs.
+
+**Updating later:** `cd /var/www/access.tedxyola.com/tedxreg && ./deploy/update.sh`
+(pulls, rebuilds, restarts — data is untouched).
+
 ## Other hosts (brief)
 
 - **Railway** — add the repo, attach a Volume mounted at `/data`, set the same

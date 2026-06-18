@@ -1,0 +1,24 @@
+# systemd unit for the TEDxYola check-in app.
+# Install:  sudo cp deploy/tedxreg.service /etc/systemd/system/tedxreg.service
+#           (adjust ExecStart node path / WorkingDirectory if yours differ)
+#           sudo systemctl daemon-reload && sudo systemctl enable --now tedxreg
+
+[Unit]
+Description=TEDxYola check-in app (Node)
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/access.tedxyola.com/tedxreg
+EnvironmentFile=/etc/tedxreg.env
+# Confirm the path with `command -v node`. NodeSource installs to /usr/bin/node.
+ExecStart=/usr/bin/node server.mjs
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
