@@ -120,9 +120,12 @@ const TICKET_TYPES = {
 }
 
 const insertGuestStatement = db.prepare(`
-  INSERT INTO guests (name, normalized_name, email, phone, code, ref_code, ticket_type, quantity, total, checked_in, merch, merch_checked_in)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, 0)
+  INSERT INTO guests (name, normalized_name, email, phone, code, ref_code, ticket_type, quantity, total, checked_in, merch, merch_checked_in, merch_items)
+  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 0, ?)
 `)
+
+// Merch items that can be added on the Quick Register form.
+const REGISTER_MERCH = ['Face Cap', 'T-Shirt', 'Tote Bag']
 
 const emailExistsStatement = db.prepare('SELECT id FROM guests WHERE email = ?')
 
@@ -325,23 +328,32 @@ const server = createServer(async (request, response) => {
       const email = String(body.email || '').trim().toLowerCase()
       const phone = String(body.phone || '').trim()
       const ticketType = String(body.ticket_type || '').trim()
+      const hasTicket = Boolean(TICKET_TYPES[ticketType])
+      const merchSelected = Array.isArray(body.merch_items)
+        ? REGISTER_MERCH.filter((item) => body.merch_items.includes(item))
+        : []
 
       if (!name) return send(response, 400, { message: 'Name is required' })
       if (!email) return send(response, 400, { message: 'Email is required' })
-      if (!TICKET_TYPES[ticketType]) {
+      if (ticketType && !hasTicket) {
         return send(response, 400, { message: 'Pick a valid ticket type' })
+      }
+      if (!hasTicket && merchSelected.length === 0) {
+        return send(response, 400, { message: 'Add a ticket or at least one merch item' })
       }
 
       if (emailExistsStatement.get(email)) {
         return send(response, 409, { message: 'A guest with this email already exists' })
       }
 
-      const quantity = Math.max(1, Number(body.quantity) || 1)
+      const quantity = hasTicket ? Math.max(1, Number(body.quantity) || 1) : 0
       const priceInput = Number(body.price)
-      const unitPrice = Number.isFinite(priceInput) && priceInput >= 0
-        ? priceInput
-        : TICKET_TYPES[ticketType]
-      const total = unitPrice * quantity
+      const validPrice = Number.isFinite(priceInput) && priceInput >= 0
+      const total = hasTicket
+        ? (validPrice ? priceInput : TICKET_TYPES[ticketType]) * quantity
+        : (validPrice ? priceInput : 0)
+      const merch = merchSelected.length > 0 ? 1 : 0
+      const merchItems = merch ? JSON.stringify(merchSelected.map((item) => ({ item, qty: 1 }))) : null
 
       let code, refCode
       try {
@@ -357,9 +369,11 @@ const server = createServer(async (request, response) => {
         phone,
         code,
         refCode,
-        ticketType,
+        hasTicket ? ticketType : null,
         quantity,
         total,
+        merch,
+        merchItems,
       )
 
       return send(response, 201, {

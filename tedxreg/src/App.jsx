@@ -17,7 +17,8 @@ const TICKET_OPTIONS = [
   { value: 'Blaze', label: 'Blaze (Exclusive Access)', price: 20000 },
 ]
 const TICKET_PRICES = Object.fromEntries(TICKET_OPTIONS.map((t) => [t.value, t.price]))
-const EMPTY_REGISTRATION = { name: '', email: '', phone: '', ticket_type: 'Spark', price: String(TICKET_PRICES.Spark) }
+const MERCH_OPTIONS = ['Face Cap', 'T-Shirt', 'Tote Bag']
+const EMPTY_REGISTRATION = { name: '', email: '', phone: '', ticket_type: 'Spark', quantity: '1', price: String(TICKET_PRICES.Spark), merch: [] }
 const formatNaira = (amount) => `₦${Number(amount).toLocaleString('en-NG')}`
 const ACTION_MESSAGES = {
   'check-in': '✓ Entry check-in saved',
@@ -370,6 +371,7 @@ function App() {
 
     const name = registration.name.trim()
     const email = registration.email.trim()
+    const hasTicket = Boolean(registration.ticket_type)
     if (!name) {
       setRegisterError('Name is required')
       return
@@ -378,9 +380,13 @@ function App() {
       setRegisterError('Email is required')
       return
     }
+    if (!hasTicket && registration.merch.length === 0) {
+      setRegisterError('Pick a ticket or at least one merch item')
+      return
+    }
     const price = Number(registration.price)
     if (!Number.isFinite(price) || price < 0) {
-      setRegisterError('Enter a valid price')
+      setRegisterError('Enter a valid amount')
       return
     }
 
@@ -394,7 +400,9 @@ function App() {
           email,
           phone: registration.phone.trim(),
           ticket_type: registration.ticket_type,
+          quantity: hasTicket ? Math.max(1, Number(registration.quantity) || 1) : 0,
           price,
+          merch_items: registration.merch,
         }),
       })
       setStats(data.stats)
@@ -993,7 +1001,7 @@ function App() {
                   value={registration.ticket_type}
                   onChange={(e) => {
                     const ticket_type = e.target.value
-                    setRegistration((r) => ({ ...r, ticket_type, price: String(TICKET_PRICES[ticket_type]) }))
+                    setRegistration((r) => ({ ...r, ticket_type, price: ticket_type ? String(TICKET_PRICES[ticket_type]) : '0' }))
                   }}
                 >
                   {TICKET_OPTIONS.map((ticket) => (
@@ -1001,10 +1009,28 @@ function App() {
                       {ticket.label} — {formatNaira(ticket.price)}
                     </option>
                   ))}
+                  <option value="">No ticket (merch only)</option>
                 </select>
               </div>
+              {registration.ticket_type && (
+                <div className="field">
+                  <label className="field-label" htmlFor="reg-qty">Ticket quantity</label>
+                  <input
+                    id="reg-qty"
+                    type="number"
+                    min="1"
+                    step="1"
+                    inputMode="numeric"
+                    value={registration.quantity}
+                    onChange={(e) => setRegistration((r) => ({ ...r, quantity: e.target.value }))}
+                    autoComplete="off"
+                  />
+                </div>
+              )}
               <div className="field">
-                <label className="field-label" htmlFor="reg-price">Price (₦)</label>
+                <label className="field-label" htmlFor="reg-price">
+                  {registration.ticket_type ? 'Unit price (₦)' : 'Amount paid (₦)'}
+                </label>
                 <input
                   id="reg-price"
                   type="number"
@@ -1015,6 +1041,27 @@ function App() {
                   onChange={(e) => setRegistration((r) => ({ ...r, price: e.target.value }))}
                   autoComplete="off"
                 />
+              </div>
+              <div className="field">
+                <span className="field-label">Merch</span>
+                <div className="merch-checks">
+                  {MERCH_OPTIONS.map((item) => {
+                    const checked = registration.merch.includes(item)
+                    return (
+                      <label key={item} className={`merch-check${checked ? ' checked' : ''}`}>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => setRegistration((r) => ({
+                            ...r,
+                            merch: e.target.checked ? [...r.merch, item] : r.merch.filter((m) => m !== item),
+                          }))}
+                        />
+                        {item}
+                      </label>
+                    )
+                  })}
+                </div>
               </div>
 
               {registerError && <p className="error-text">⚠ {registerError}</p>}

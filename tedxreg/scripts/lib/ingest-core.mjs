@@ -10,7 +10,7 @@
 // re-derived from the files, so a partial file would wrongly clear merch for
 // anyone not in it.
 
-const MERCH_RE = /t-?shirt|face\s*cap|hoodie|branded/i
+const MERCH_RE = /t-?shirt|face\s*cap|hoodie|tote\s*bag|branded/i
 const TIER_RE = /(Spark|Ember|Blaze)/i
 const TIER_RANK = { Spark: 1, Ember: 2, Blaze: 3 }
 

@@ -936,6 +936,31 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
   background: var(--bg-1);
 }
 
+.merch-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.merch-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 9px 13px;
+  border-radius: 10px;
+  border: 1.5px solid var(--line-med);
+  background: var(--bg-2);
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.merch-check.checked {
+  border-color: var(--tedx-red);
+  background: var(--danger-bg);
+  color: var(--tedx-red);
+}
+.merch-check input { accent-color: var(--tedx-red); width: 16px; height: 16px; }
+
 .ticket-pill {
   display: inline-flex;
   align-items: center;
