@@ -194,7 +194,9 @@ function App() {
   const [registerError, setRegisterError] = useState('')
   const [registerStatus, setRegisterStatus] = useState('')
   const [registerLoading, setRegisterLoading] = useState(false)
+  const [returnToSearchAfterModal, setReturnToSearchAfterModal] = useState(false)
   const searchInputRef = useRef(null)
+  const registerNameRef = useRef(null)
 
   const isLoggedIn = token.length > 0
   const isAdmin = role === 'admin'
@@ -364,8 +366,7 @@ function App() {
     setRegisterOpen(true)
   }
 
-  async function submitRegistration(event) {
-    event.preventDefault()
+  async function submitRegistration(mode) {
     setRegisterError('')
     setRegisterStatus('')
 
@@ -406,8 +407,21 @@ function App() {
         }),
       })
       setStats(data.stats)
-      setRegisterStatus(`✓ ${data.guest.name} registered · code ${data.guest.code}`)
       setRegistration(EMPTY_REGISTRATION)
+
+      if (mode === 'checkin') {
+        // Hand off to the check-in modal, then return to search on close.
+        setRegisterOpen(false)
+        setRegisterStatus('')
+        setActionStatus('')
+        setMode('search')
+        setReturnToSearchAfterModal(true)
+        setSelectedGuest(data.guest)
+      } else {
+        // Register & New: keep the form open for the next person.
+        setRegisterStatus(`✓ ${data.guest.name} registered · code ${data.guest.code}`)
+        window.requestAnimationFrame(() => registerNameRef.current?.focus())
+      }
     } catch (error) {
       setRegisterError(error.message || 'Could not register guest')
       handleAuthError(error)
@@ -494,6 +508,19 @@ function App() {
       handleAuthError(error)
     } finally {
       setSelling(false)
+    }
+  }
+
+  function closeGuestModal() {
+    setSelectedGuest(null)
+    setActionStatus('')
+    if (returnToSearchAfterModal) {
+      // After a "Register & Check-In", return to search ready for the next guest.
+      setReturnToSearchAfterModal(false)
+      setMode('search')
+      setQuery('')
+      setGuests([])
+      window.requestAnimationFrame(() => searchInputRef.current?.focus())
     }
   }
 
@@ -790,7 +817,7 @@ function App() {
         <div
           className="modal-backdrop"
           role="presentation"
-          onMouseDown={() => setSelectedGuest(null)}
+          onMouseDown={closeGuestModal}
         >
           <section
             className="guest-modal"
@@ -799,7 +826,7 @@ function App() {
             aria-labelledby="modal-guest-name"
             onMouseDown={(e) => e.stopPropagation()}
           >
-            <button className="close-button" type="button" aria-label="Close" onClick={() => setSelectedGuest(null)}>
+            <button className="close-button" type="button" aria-label="Close" onClick={closeGuestModal}>
               <IconClose />
             </button>
 
@@ -963,11 +990,12 @@ function App() {
               <h2 id="register-title">New Guest</h2>
             </div>
 
-            <form className="register-form" onSubmit={submitRegistration}>
+            <form className="register-form" onSubmit={(e) => { e.preventDefault(); submitRegistration('checkin') }}>
               <div className="field">
                 <label className="field-label" htmlFor="reg-name">Name</label>
                 <input
                   id="reg-name"
+                  ref={registerNameRef}
                   value={registration.name}
                   onChange={(e) => setRegistration((r) => ({ ...r, name: e.target.value }))}
                   autoFocus
@@ -1067,9 +1095,19 @@ function App() {
               {registerError && <p className="error-text">⚠ {registerError}</p>}
               {registerStatus && <p className="save-status">{registerStatus}</p>}
 
-              <button className="primary-button" type="submit" disabled={registerLoading} style={{ marginTop: 4 }}>
-                {registerLoading ? 'Registering…' : 'Register Guest'}
-              </button>
+              <div className="register-actions">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  disabled={registerLoading}
+                  onClick={() => submitRegistration('new')}
+                >
+                  Register &amp; New
+                </button>
+                <button className="primary-button" type="submit" disabled={registerLoading}>
+                  {registerLoading ? 'Registering…' : 'Register & Check-In'}
+                </button>
+              </div>
             </form>
             </div>
           </section>

@@ -961,6 +961,33 @@ button:disabled { cursor: not-allowed; opacity: 0.42; }
 }
 .merch-check input { accent-color: var(--tedx-red); width: 16px; height: 16px; }
 
+.register-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+.register-actions .primary-button { flex: 1.6; }
+.register-actions .secondary-button { flex: 1; }
+.secondary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--line-med);
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 700;
+  padding: 0 16px;
+  cursor: pointer;
+}
+.secondary-button:not(:disabled):hover {
+  background: var(--surface-hover);
+  border-color: var(--line-strong);
+}
+.secondary-button:disabled { opacity: 0.6; cursor: default; }
+
 .ticket-pill {
   display: inline-flex;
   align-items: center;
