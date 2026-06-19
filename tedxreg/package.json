@@ -15,7 +15,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "import:sales": "node scripts/create_product_db.mjs",
-    "import:reports": "node scripts/ingest_sales.mjs"
+    "import:reports": "node scripts/ingest_sales.mjs",
+    "create:users": "node scripts/create_users.mjs"
   },
   "dependencies": {
     "react": "^19.2.6",

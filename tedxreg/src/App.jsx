@@ -3,6 +3,7 @@ import './App.css'
 
 const savedToken = localStorage.getItem('tedx-token') || ''
 const savedRole = localStorage.getItem('tedx-role') || 'user'
+const savedName = localStorage.getItem('tedx-name') || ''
 const ROSTER_FILTERS = [
   { key: 'all', label: 'All' },
   { key: 'entry-pending', label: 'Not checked in' },
@@ -168,8 +169,9 @@ function IconUpload() {
 function App() {
   const [token, setToken] = useState(savedToken)
   const [role, setRole] = useState(savedRole)
+  const [displayName, setDisplayName] = useState(savedName)
   const [theme, setTheme] = useState(savedTheme)
-  const [login, setLogin] = useState({ username: 'user', password: '' })
+  const [login, setLogin] = useState({ username: '', password: '' })
   const [loginError, setLoginError] = useState('')
   const [query, setQuery] = useState('')
   const [guests, setGuests] = useState([])
@@ -213,8 +215,10 @@ function App() {
   const logout = useCallback(() => {
     localStorage.removeItem('tedx-token')
     localStorage.removeItem('tedx-role')
+    localStorage.removeItem('tedx-name')
     setToken('')
     setRole('user')
+    setDisplayName('')
     setGuests([])
     setQuery('')
     setSelectedGuest(null)
@@ -303,27 +307,28 @@ function App() {
     setRosterPage(updater)
   }
 
+  async function downloadCsv(path, filename) {
+    const response = await fetch(path, { headers: { Authorization: `Bearer ${token}` } })
+    if (!response.ok) throw new Error('Download failed')
+    const blob = await response.blob()
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    URL.revokeObjectURL(url)
+  }
+
   async function exportCsv() {
     setExporting(true)
-    try {
-      const response = await fetch('/api/admin/export.csv', {
-        headers: { Authorization: `Bearer ${token}` },
-      })
-      if (!response.ok) throw new Error('Export failed')
-      const blob = await response.blob()
-      const url = URL.createObjectURL(blob)
-      const link = document.createElement('a')
-      link.href = url
-      link.download = 'tedx-guests.csv'
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      URL.revokeObjectURL(url)
-    } catch {
-      /* surfaced via button state reset */
-    } finally {
-      setExporting(false)
-    }
+    try { await downloadCsv('/api/admin/export.csv', 'tedx-guests.csv') } catch { /* ignore */ } finally { setExporting(false) }
+  }
+
+  async function exportAudit() {
+    setExporting(true)
+    try { await downloadCsv('/api/admin/audit.csv', 'tedx-audit-log.csv') } catch { /* ignore */ } finally { setExporting(false) }
   }
 
   function pickImportFiles() {
@@ -441,11 +446,14 @@ function App() {
         body: JSON.stringify(login),
       })
       const nextRole = data.role || 'user'
+      const nextName = data.displayName || data.username || login.username
       localStorage.setItem('tedx-token', data.token)
       localStorage.setItem('tedx-role', nextRole)
+      localStorage.setItem('tedx-name', nextName)
       setToken(data.token)
       setRole(nextRole)
-      setLogin({ username: 'user', password: '' })
+      setDisplayName(nextName)
+      setLogin({ username: '', password: '' })
     } catch (error) {
       setLoginError(error.message || 'Login failed')
     } finally {
@@ -605,7 +613,7 @@ function App() {
         </div>
 
         <div className="top-bar-right">
-          {isAdmin && <span className="role-badge">Admin</span>}
+          {displayName && <span className="role-badge">{displayName}{isAdmin ? ' · Admin' : ''}</span>}
           <button className="register-cta" type="button" onClick={openRegister}>
             <IconPlus />
             <span>Register</span>
@@ -671,6 +679,16 @@ function App() {
                 >
                   <IconDownload />
                   {exporting ? 'Exporting…' : 'Export CSV'}
+                </button>
+                <button
+                  className="export-button"
+                  type="button"
+                  onClick={exportAudit}
+                  disabled={exporting}
+                  title="Download the accountability log (who checked in / issued merch)"
+                >
+                  <IconDownload />
+                  Audit Log
                 </button>
               </div>
             </div>

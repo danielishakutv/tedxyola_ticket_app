@@ -1,5 +1,5 @@
 import { createServer } from 'node:http'
-import { mkdirSync, readFileSync, existsSync, statSync, copyFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync, existsSync, statSync, copyFileSync } from 'node:fs'
 import { dirname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DatabaseSync } from 'node:sqlite'
@@ -14,9 +14,21 @@ const dataDir = process.env.DATA_DIR || join(__dirname, 'data')
 const dbPath = join(dataDir, 'product-sales.sqlite')
 const seedDbPath = join(__dirname, 'data', 'product-sales.sqlite')
 const distDir = join(__dirname, 'dist')
-const sessions = new Map()
 
 mkdirSync(dataDir, { recursive: true })
+
+// Stateless signed tokens (survive restarts, no in-memory session store). The
+// secret is persisted so logins stay valid across deploys/restarts.
+const sessionSecretPath = join(dataDir, '.session-secret')
+let sessionSecret = process.env.SESSION_SECRET || ''
+if (!sessionSecret) {
+  if (existsSync(sessionSecretPath)) {
+    sessionSecret = readFileSync(sessionSecretPath, 'utf8').trim()
+  } else {
+    sessionSecret = crypto.randomBytes(32).toString('hex')
+    writeFileSync(sessionSecretPath, sessionSecret, { mode: 0o600 })
+  }
+}
 
 // First boot on a fresh volume: seed it from the bundled DB so we start with
 // real data instead of an empty table. Existing volume data is left untouched.
@@ -77,6 +89,37 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS guests_merch_idx ON guests(merch);
   CREATE INDEX IF NOT EXISTS guests_merch_checked_in_idx ON guests(merch_checked_in);
 `)
+
+// Staff accounts (created by scripts/create_users.mjs) and the accountability log.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    username TEXT PRIMARY KEY,
+    display_name TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'user',
+    password_hash TEXT NOT NULL,
+    salt TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    actor TEXT NOT NULL,
+    action TEXT NOT NULL,
+    guest_id INTEGER,
+    guest_name TEXT,
+    guest_code TEXT,
+    detail TEXT
+  );
+  CREATE INDEX IF NOT EXISTS audit_ts_idx ON audit_log(ts);
+`)
+
+const userByName = db.prepare('SELECT username, display_name, role, password_hash, salt FROM users WHERE username = ?')
+const insertAuditStatement = db.prepare(`
+  INSERT INTO audit_log (actor, action, guest_id, guest_name, guest_code, detail)
+  VALUES (?, ?, ?, ?, ?, ?)
+`)
+const auditExportStatement = db.prepare('SELECT ts, actor, action, guest_name, guest_code, detail FROM audit_log ORDER BY id')
 
 // Mock seeding is opt-in (local demos only) so a fresh production DB never fills
 // with 520 fake guests. Real data comes from the seed copy or `import:reports`.
@@ -239,11 +282,9 @@ const server = createServer(async (request, response) => {
 
     if (request.method === 'POST' && url.pathname === '/api/login') {
       const body = await readJson(request)
-      const role = resolveRole(body.username, body.password)
-      if (role) {
-        const token = crypto.randomUUID()
-        sessions.set(token, { createdAt: Date.now(), role })
-        return send(response, 200, { token, role })
+      const user = resolveUser(body.username, body.password)
+      if (user) {
+        return send(response, 200, { token: makeToken(user), role: user.role, username: user.username, displayName: user.displayName })
       }
 
       return send(response, 401, { message: 'Wrong login details' })
@@ -286,6 +327,11 @@ const server = createServer(async (request, response) => {
     if (request.method === 'GET' && url.pathname === '/api/admin/export.csv') {
       if (!isAdmin) return send(response, 403, { message: 'Admin access required' })
       return sendCsv(response, buildCsv(exportStatement.all()))
+    }
+
+    if (request.method === 'GET' && url.pathname === '/api/admin/audit.csv') {
+      if (!isAdmin) return send(response, 403, { message: 'Admin access required' })
+      return sendCsv(response, buildAuditCsv(auditExportStatement.all()), 'tedx-audit-log.csv')
     }
 
     if (request.method === 'POST' && url.pathname === '/api/admin/import') {
@@ -376,8 +422,11 @@ const server = createServer(async (request, response) => {
         merchItems,
       )
 
+      const newGuest = guestStatement.get(Number(result.lastInsertRowid))
+      recordAudit(session.username, 'register', newGuest, `${hasTicket ? `${ticketType} x${quantity}` : 'no ticket'}${merch ? ` · ${merchSelected.join(', ')}` : ''}`)
+
       return send(response, 201, {
-        guest: formatGuest(guestStatement.get(Number(result.lastInsertRowid))),
+        guest: formatGuest(newGuest),
         stats: buildStats(),
       })
     }
@@ -406,18 +455,22 @@ const server = createServer(async (request, response) => {
 
       if (action === 'check-in') {
         const body = await readJson(request)
-        const result = admitEntry(guest, body)
+        const result = admitEntry(id, body)
         if (result.error) return send(response, 400, { message: result.error })
+        recordAudit(session.username, 'check-in', guest, `admitted ${result.admitted} (now ${result.newCount}/${result.quantity})${result.companion ? ` · ${result.companion}` : ''}`)
       } else if (action === 'check-in-merch') {
         if (!guest.merch) {
           return send(response, 400, { message: 'This guest does not have merch' })
         }
 
         merchCheckInStatement.run(id)
+        recordAudit(session.username, 'check-in-merch', guest, formatMerchItems(guest.merch_items))
       } else if (action === 'undo-check-in') {
-        undoEntry(guest)
+        const result = undoEntry(id)
+        recordAudit(session.username, 'undo-check-in', guest, `now ${result.newCount}/${result.quantity}`)
       } else {
         merchUndoStatement.run(id)
+        recordAudit(session.username, 'undo-check-in-merch', guest, null)
       }
 
       return send(response, 200, {
@@ -439,6 +492,7 @@ const server = createServer(async (request, response) => {
       }
 
       sellTicketStatement.run(ticketType, TICKET_TYPES[ticketType], id)
+      recordAudit(session.username, 'sell-ticket', guest, `${ticketType} (${TICKET_TYPES[ticketType]})`)
 
       return send(response, 200, {
         guest: formatGuest(guestStatement.get(id)),
@@ -591,7 +645,14 @@ function generateUniqueCodes() {
 }
 
 // Admit `count` people against an order, optionally naming a single companion.
-function admitEntry(guest, body) {
+// NOTE: re-reads the guest by id and writes in one synchronous pass. Because
+// node:sqlite is synchronous and Node is single-threaded, this whole function
+// runs atomically — two devices admitting the same guest can't interleave, so
+// the counter can never be corrupted or over-admitted.
+function admitEntry(id, body) {
+  const guest = guestStatement.get(id)
+  if (!guest) return { error: 'Guest not found' }
+
   const quantity = Math.max(1, Number(guest.quantity || 1))
   const already = Number(guest.checked_in_count || 0)
   const remaining = quantity - already
@@ -611,19 +672,22 @@ function admitEntry(guest, body) {
   const newCount = already + admit
   const checkedIn = newCount >= quantity ? 1 : 0
   const checkedInAt = guest.checked_in_at || now
-  setEntryStatement.run(checkedIn, newCount, checkedInAt, JSON.stringify(log), guest.id)
-  return { admitted: admit }
+  setEntryStatement.run(checkedIn, newCount, checkedInAt, JSON.stringify(log), id)
+  return { admitted: admit, newCount, quantity, companion }
 }
 
-// Reverse the most recent admission (admin only).
-function undoEntry(guest) {
+// Reverse the most recent admission (admin only). Also re-reads for atomicity.
+function undoEntry(id) {
+  const guest = guestStatement.get(id)
+  if (!guest) return { error: 'Guest not found' }
   const quantity = Math.max(1, Number(guest.quantity || 1))
   const log = parseAdmissions(guest.admissions)
   log.pop()
   const newCount = Math.max(0, Number(guest.checked_in_count || 0) - 1)
   const checkedIn = newCount >= quantity ? 1 : 0
   const checkedInAt = newCount === 0 ? null : guest.checked_in_at
-  setEntryStatement.run(checkedIn, newCount, checkedInAt, log.length ? JSON.stringify(log) : null, guest.id)
+  setEntryStatement.run(checkedIn, newCount, checkedInAt, log.length ? JSON.stringify(log) : null, id)
+  return { newCount, quantity }
 }
 
 function formatGuest(guest) {
@@ -705,18 +769,57 @@ if (!process.env.ADMIN_PASSWORD || !process.env.USER_PASSWORD) {
   console.warn('⚠ Using default dev passwords. Set USER_PASSWORD and ADMIN_PASSWORD env vars in production.')
 }
 
-function resolveRole(username, password) {
-  const match = CREDENTIALS.find(
-    (credential) => credential.username === username && credential.password === password,
-  )
-  return match ? match.role : null
+function verifyPassword(password, salt, hash) {
+  const candidate = crypto.scryptSync(String(password), salt, 64)
+  const expected = Buffer.from(hash, 'hex')
+  return candidate.length === expected.length && crypto.timingSafeEqual(candidate, expected)
 }
 
+// Returns { username, role, displayName } or null.
+function resolveUser(username, password) {
+  const envMatch = CREDENTIALS.find((c) => c.username === username && c.password === password)
+  if (envMatch) return { username: envMatch.username, role: envMatch.role, displayName: envMatch.username }
+
+  const row = userByName.get(String(username || ''))
+  if (row && verifyPassword(password, row.salt, row.password_hash)) {
+    return { username: row.username, role: row.role, displayName: row.display_name }
+  }
+  return null
+}
+
+const b64url = (buf) => Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
+
+function makeToken(user) {
+  const payload = b64url(JSON.stringify({ u: user.username, r: user.role, n: user.displayName, t: Date.now() }))
+  const sig = b64url(crypto.createHmac('sha256', sessionSecret).update(payload).digest())
+  return `${payload}.${sig}`
+}
+
+// Stateless: verify the HMAC signature instead of a server-side session store.
 function getSession(request) {
-  const authorization = request.headers.authorization || ''
-  const token = authorization.replace(/^Bearer\s+/i, '')
-  if (token.length === 0) return null
-  return sessions.get(token) || null
+  const token = (request.headers.authorization || '').replace(/^Bearer\s+/i, '')
+  const dot = token.indexOf('.')
+  if (dot < 1) return null
+  const payload = token.slice(0, dot)
+  const sig = token.slice(dot + 1)
+  const expected = b64url(crypto.createHmac('sha256', sessionSecret).update(payload).digest())
+  if (sig.length !== expected.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expected))) {
+    return null
+  }
+  try {
+    const data = JSON.parse(Buffer.from(payload.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString())
+    return { username: data.u, role: data.r, displayName: data.n }
+  } catch {
+    return null
+  }
+}
+
+function recordAudit(actor, action, guest, detail) {
+  try {
+    insertAuditStatement.run(actor || 'unknown', action, guest?.id ?? null, guest?.name ?? null, guest?.code ?? null, detail ?? null)
+  } catch (error) {
+    console.error('audit log failed:', error)
+  }
 }
 
 function buildCsv(rows) {
@@ -757,13 +860,29 @@ function csvCell(value) {
   return text
 }
 
-function sendCsv(response, csv) {
+function buildAuditCsv(rows) {
+  const header = ['Time', 'Staff', 'Action', 'Guest', 'Code', 'Detail']
+  const lines = [header.map(csvCell).join(',')]
+  for (const row of rows) {
+    lines.push([
+      row.ts || '',
+      row.actor || '',
+      row.action || '',
+      row.guest_name || '',
+      row.guest_code || '',
+      row.detail || '',
+    ].map(csvCell).join(','))
+  }
+  return lines.join('\r\n')
+}
+
+function sendCsv(response, csv, filename = 'tedx-guests.csv') {
   response.writeHead(200, {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Content-Type': 'text/csv; charset=utf-8',
-    'Content-Disposition': 'attachment; filename="tedx-guests.csv"',
+    'Content-Disposition': `attachment; filename="${filename}"`,
   })
   response.end('﻿' + csv)
 }
